@@ -30,6 +30,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -40,6 +41,7 @@ import org.apache.jena.rdf.model.Model;
 import org.apache.jena.rdf.model.Property;
 import org.apache.jena.riot.Lang;
 import org.apache.jena.vocabulary.RDF;
+import org.fcrepo.storage.ocfl.CommitType;
 import org.fcrepo.storage.ocfl.InteractionModel;
 import org.fcrepo.storage.ocfl.OcflObjectSession;
 import org.fcrepo.storage.ocfl.OcflObjectSessionFactory;
@@ -80,6 +82,10 @@ public class ResourceMigrator {
     private final Lang dstRdfLang;
     private final String baseUri;
     private final Set<String> archivalGroupRdfTypes;
+
+    // Archival groups being staged in their OCFL object's mutable HEAD, mapped to the latest timestamp written so
+    // far, which becomes the timestamp of the group's single version when it is committed
+    private final Map<String, Instant> stagedArchivalGroups = new ConcurrentHashMap<>();
 
     /**
      * @param config the migration configuration
@@ -159,6 +165,12 @@ public class ResourceMigrator {
         final boolean isArchivalGroup = checkForArchivalGroup(info, currentRdf);
         if (isArchivalGroup) {
             info.setArchivalGroupId(info.getFullId());
+            // Committing each resource of the group as its own version would give the object one version per
+            // resource, each holding a full copy of an ever larger inventory. Without Fedora versions to preserve,
+            // stage the whole group and commit it as one version once all of it is migrated.
+            if (!hasVersionsBelow(containerDir)) {
+                stagedArchivalGroups.put(info.getFullId(), Instant.EPOCH);
+            }
         }
 
         Instant lastVersionUpdate = null;
@@ -192,8 +204,9 @@ public class ResourceMigrator {
         final var interactionModel = identifyInteractionModel(info.getFullId(), rdf);
 
         final var headers = createContainerHeaders(info, interactionModel, rdf, isArchivalGroup);
+        final var sessionId = getIdForSession(headers, info.getFullId());
 
-        doInSession(getIdForSession(headers, info.getFullId()), session -> {
+        doInSession(sessionId, session -> {
             final var isFirst = !session.containsResource(info.getFullId());
 
             session.versionCreationTimestamp(timestamp.atOffset(ZoneOffset.UTC));
@@ -205,8 +218,51 @@ public class ResourceMigrator {
                 migrateAcl(info.getFullId(), aclArchivalGroupId, containerDir, session);
             }
 
+            stageIfInStagedArchivalGroup(session, sessionId, timestamp);
             session.commit();
         });
+    }
+
+    /**
+     * Commits an archival group that was staged in its OCFL object's mutable HEAD as a single version. Called once all
+     * of the group has been migrated; does nothing if nothing is staged.
+     *
+     * @param archivalGroupId the id of the archival group
+     */
+    public void commitArchivalGroup(final String archivalGroupId) {
+        final var timestamp = stagedArchivalGroups.remove(archivalGroupId);
+        doInSession(archivalGroupId, session -> {
+            // A new version commit of an object with a mutable HEAD commits the HEAD as a version
+            session.commitType(CommitType.NEW_VERSION);
+            if (timestamp != null && timestamp.isAfter(Instant.EPOCH)) {
+                session.versionCreationTimestamp(timestamp.atOffset(ZoneOffset.UTC));
+            }
+            session.commit();
+        });
+    }
+
+    /**
+     * Writes to an archival group that is being staged go to its object's mutable HEAD instead of each becoming a
+     * new version.
+     */
+    private void stageIfInStagedArchivalGroup(final OcflObjectSession session, final String sessionId,
+                                              final Instant timestamp) {
+        final var latest = stagedArchivalGroups.computeIfPresent(sessionId,
+                (id, previous) -> timestamp.isAfter(previous) ? timestamp : previous);
+        if (latest != null) {
+            session.commitType(CommitType.UNVERSIONED);
+        }
+    }
+
+    private boolean hasVersionsBelow(final Path directory) {
+        if (!Files.isDirectory(directory)) {
+            return false;
+        }
+        try (final var paths = Files.walk(directory)) {
+            return paths.anyMatch(path -> Files.isDirectory(path) && FCR_VERSIONS.equals(path.getFileName().toString()));
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
     }
 
     private String getIdForSession(ResourceHeaders headers, String fullId) {
@@ -294,7 +350,9 @@ public class ResourceMigrator {
                              final ResourceHeaders descHeaders,
                              final Model rdf,
                              final Instant timestamp) {
-        doInSession(getIdForSession(contentHeaders, fullId), session -> {
+        final var sessionId = getIdForSession(contentHeaders, fullId);
+
+        doInSession(sessionId, session -> {
             final var isFirst = !session.containsResource(fullId);
             final String archivalGroupId = contentHeaders.getArchivalGroupId();
 
@@ -306,6 +364,7 @@ public class ResourceMigrator {
                 migrateAcl(fullId, archivalGroupId, binaryDir, session);
             }
 
+            stageIfInStagedArchivalGroup(session, sessionId, timestamp);
             session.commit();
         });
     }

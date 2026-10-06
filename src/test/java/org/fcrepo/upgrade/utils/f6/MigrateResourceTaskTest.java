@@ -17,6 +17,7 @@ import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -96,6 +97,32 @@ public class MigrateResourceTaskTest {
         verify(taskManager).processImmediately(child2);
         verify(taskManager, never()).submit(any());
         verify(infoLogger, never()).log(any());
+    }
+
+    @Test
+    public void testArchivalGroupCommittedAfterItsMembers() throws Exception {
+        final var agInfo = ResourceInfo.container(INFO_FEDORA, parentId, parentId, Paths.get("/parent"), "parent");
+        final var child = ResourceInfo.container(parentId, parentId + "/child", parentId, Paths.get("/child"), "child");
+
+        when(resourceMigrator.migrate(agInfo)).thenReturn(List.of(child));
+
+        final var task = new MigrateResourceTask(taskManager, resourceMigrator, infoLogger, agInfo);
+        task.run();
+
+        final var inOrder = inOrder(taskManager, resourceMigrator);
+        inOrder.verify(taskManager).processImmediately(child);
+        inOrder.verify(resourceMigrator).commitArchivalGroup(parentId);
+        verify(infoLogger, never()).log(any());
+    }
+
+    @Test
+    public void testNonArchivalGroupNotCommitted() throws Exception {
+        when(resourceMigrator.migrate(parentInfo)).thenReturn(List.of());
+
+        final var task = new MigrateResourceTask(taskManager, resourceMigrator, infoLogger, parentInfo);
+        task.run();
+
+        verify(resourceMigrator, never()).commitArchivalGroup(any());
     }
 
     @Test

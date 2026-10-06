@@ -265,6 +265,7 @@ public class ResourceMigratorTest {
         final var info = containerInfo("simple-container");
 
         migrateNoChildren(info);
+        migrator.commitArchivalGroup(info.getFullId());
 
         final var expectedHeaders = expectedBuilder(info.getFullId())
                 .withArchivalGroup(true)
@@ -281,6 +282,7 @@ public class ResourceMigratorTest {
 
         final var children = migrate(info);
         children.forEach(this::migrateNoChildren);
+        migrator.commitArchivalGroup(info.getFullId());
 
         final var expectedHeaders = expectedBuilder(info.getFullId())
                 .withArchivalGroup(true)
@@ -315,6 +317,35 @@ public class ResourceMigratorTest {
                 "src/test/resources/5.1-to-6-expected/data/ocfl-root/56d/ed5/34e/" +
                      "56ded534e5e1683bbffd6724f71ae467eac4689294da024e7e9cfde511944303/v1/content/fcr-container.nt"));
         assertHeadSame(containerChild.getFullId(), expectedContainerHeaders, expectedContent);
+    }
+
+    @Test
+    public void migrateBasicContainerAGWithoutVersionsAsOneVersion() {
+        config.setArchivalGroupRdfTypes(FedoraTypes.LDP_BASIC_CONTAINER);
+        migrator = new ResourceMigrator(config, migrationOcflFactory);
+        final var info = containerInfo("container-with-children");
+
+        final var children = migrate(info);
+        children.forEach(this::migrateNoChildren);
+        migrator.commitArchivalGroup(info.getFullId());
+
+        // One version for the whole group, rather than one per resource, each with a full inventory copy
+        final var session = migrationOcflFactory.newSession(info.getFullId());
+        assertEquals(1, session.listVersions(info.getFullId()).size());
+        for (final var child : children) {
+            assertEquals(child.getFullId(), 1, session.listVersions(child.getFullId()).size());
+        }
+    }
+
+    @Test
+    public void commitArchivalGroupWithNothingStagedDoesNothing() {
+        final var info = containerInfo("simple-container");
+        migrateNoChildren(info);
+
+        migrator.commitArchivalGroup(info.getFullId());
+
+        final var session = migrationOcflFactory.newSession(info.getFullId());
+        assertEquals(1, session.listVersions(info.getFullId()).size());
     }
 
     @Test

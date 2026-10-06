@@ -57,6 +57,11 @@ public class MigrateResourceTask implements Runnable {
                     infoLogger.log(child);
                 }
             }
+
+            // Archival group members are migrated in place above, so by now the whole group has been migrated
+            if (info.getFullId().equals(info.getArchivalGroupId())) {
+                resourceMigrator.commitArchivalGroup(info.getFullId());
+            }
         } catch (UnsupportedOperationException e) {
             // This is thrown when a resource is encountered that is not currently handled
             LOGGER.error(e.getMessage());
