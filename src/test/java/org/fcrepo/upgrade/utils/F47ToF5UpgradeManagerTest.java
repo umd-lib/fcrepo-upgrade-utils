@@ -5,7 +5,9 @@
  */
 package org.fcrepo.upgrade.utils;
 
+import static org.apache.jena.rdf.model.ResourceFactory.createProperty;
 import static org.fcrepo.upgrade.utils.RdfConstants.ACCESS_CONTROL;
+import static org.fcrepo.upgrade.utils.RdfConstants.ACL_NS;
 import static org.fcrepo.upgrade.utils.RdfConstants.AUTHORIZATION;
 import static org.fcrepo.upgrade.utils.RdfConstants.FEDORA_LAST_MODIFIED_DATE;
 import static org.junit.Assert.assertEquals;
@@ -23,6 +25,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -159,6 +162,76 @@ public class F47ToF5UpgradeManagerTest {
         assertEquals("The subject should be the acl: ",
                      "http://localhost:8080/rest/container1/fcr:acl",
                      lastModifiedStatement.getSubject().getURI());
+    }
+
+    @Test
+    public void testUpgradeIgnoresNonRdfFilesInAclDirectory() throws Exception {
+        final File input = copyOfExport("4.7.5-export");
+        // Only RDF can be an authorization; this used to be parsed as Turtle and abort the upgrade
+        Files.writeString(input.toPath().resolve("rest/acl/notes.binary"), "{\"not\": \"turtle\"}\n");
+
+        final File output = upgrade(input);
+
+        assertEquals(List.of("user1", "user2"), container1AclAgents(output));
+    }
+
+    @Test
+    public void testUpgradeIgnoresOldVersionsOfAuthorizations() throws Exception {
+        final File input = copyOfExport("4.7.5-export");
+        // An old version of an authorization must not grant access again in the migrated ACL
+        addAuthorizationVersion(input, "authZ1", "version.20190101000000", "2019-01-01T00:00:00.000Z",
+                                "revoked-user");
+
+        final File output = upgrade(input);
+
+        assertEquals(List.of("user1", "user2"), container1AclAgents(output));
+    }
+
+    private File copyOfExport(final String name) throws IOException {
+        final File copy = tempFolder.newFolder();
+        FileUtils.copyDirectory(new File(TARGET_DIR + "/test-classes/" + name), copy);
+        return copy;
+    }
+
+    private File upgrade(final File input) throws Exception {
+        final File output = tempFolder.newFolder();
+        final var config = new Config();
+        config.setSourceVersion(FedoraVersion.V_4_7_5);
+        config.setTargetVersion(FedoraVersion.V_5);
+        config.setInputDir(input);
+        config.setOutputDir(output);
+        UpgradeManagerFactory.create(config).start();
+        return output;
+    }
+
+    /**
+     * Adds an old version of an authorization in the ACL at rest/acl, granting access to an agent the current
+     * authorization does not
+     */
+    private void addAuthorizationVersion(final File export, final String authorization, final String label,
+                                         final String created, final String agent) throws IOException {
+        final var acl = export.toPath().resolve("rest/acl");
+        final var uri = "http://localhost:8080/rest/acl/" + authorization;
+        final var mementoUri = uri + "/fcr:versions/" + label;
+        final var current = Files.readString(acl.resolve(authorization + ".ttl"));
+        final var versions = acl.resolve(authorization).resolve("fcr%3Aversions");
+        Files.createDirectories(versions);
+        Files.writeString(versions.resolve(label + ".ttl"),
+                          current.replace("<" + uri + ">", "<" + mementoUri + ">")
+                                 .replace("\"user1\"", "\"" + agent + "\""));
+        Files.writeString(acl.resolve(authorization).resolve("fcr%3Aversions.ttl"), String.join("\n",
+                "@prefix fedora: <http://fedora.info/definitions/v4/repository#> .",
+                "<" + uri + "> fedora:hasVersion <" + mementoUri + "> .",
+                "<" + mementoUri + "> fedora:hasVersionLabel \"" + label + "\" ;",
+                "    fedora:created \"" + created + "\"^^<http://www.w3.org/2001/XMLSchema#dateTime> ."));
+    }
+
+    private List<String> container1AclAgents(final File output) {
+        final var model = RdfUtil.parseRdf(Path.of(output.toString(), "rest/container1/fcr%3Aacl.ttl"), Lang.TTL);
+        return model.listObjectsOfProperty(createProperty(ACL_NS + "agent")).toList().stream()
+                    .map(agent -> agent.asLiteral().getString())
+                    .sorted()
+                    .collect(Collectors.toList());
     }
 
     @Test

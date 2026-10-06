@@ -89,6 +89,7 @@ class F47ToF5UpgradeManager extends UpgradeManagerBase implements UpgradeManager
     private static final String FCR_METADATA_PATH_SEGMENT = "fcr%3Ametadata";
     private static final String FCR_VERSIONS_PATH_SEGMENT = "fcr%3Aversions";
     private static final String FCR_ACL_PATH_SEGMENT = "fcr%3Aacl";
+    private static final String FCR_PATH_SEGMENT_PREFIX = "fcr%3A";
     private static final String TYPE_RELATION = "type";
     private static final String HEADERS_SUFFIX = ".headers";
     public static final String APPLICATION_OCTET_STREAM_MIMETYPE = "application/octet-stream";
@@ -347,7 +348,7 @@ class F47ToF5UpgradeManager extends UpgradeManagerBase implements UpgradeManager
         final var authorizations = new LinkedHashMap<String, List<Statement>>();
         var authIndex = new AtomicInteger(0);
         try (final Stream<Path> list = Files.walk(aclDirectory)) {
-            list.filter(Files::isRegularFile).forEach(authFile -> {
+            list.filter(Files::isRegularFile).filter(file -> isCurrentRdf(aclDirectory, file)).forEach(authFile -> {
                  final var model = createModelFromFile(authFile);
                 final var authName = "auth" + authIndex.get();
                 final var subject = createResource(newAclResource + "#" + authName);
@@ -391,6 +392,23 @@ class F47ToF5UpgradeManager extends UpgradeManagerBase implements UpgradeManager
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
+    }
+
+    /**
+     * Only an ACL's current RDF resources can be its authorizations. Binaries and other non-RDF files cannot be
+     * parsed as RDF, and fcr:* entries, such as old versions under fcr%3Aversions, must not grant access again.
+     *
+     * @param aclDirectory the exported ACL's directory
+     * @param file a file under that directory
+     * @return true if the file is the current RDF of a resource in the ACL
+     */
+    private boolean isCurrentRdf(final Path aclDirectory, final Path file) {
+        for (final Path segment : aclDirectory.relativize(file)) {
+            if (segment.toString().startsWith(FCR_PATH_SEGMENT_PREFIX)) {
+                return false;
+            }
+        }
+        return file.getFileName().toString().endsWith("." + config.getSrcRdfExt());
     }
 
     private String locateBinaryHeadersPrefixForVersionedBinary(final Path newLocation) {
