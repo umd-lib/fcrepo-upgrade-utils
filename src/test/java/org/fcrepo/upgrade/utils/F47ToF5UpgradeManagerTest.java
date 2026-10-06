@@ -7,8 +7,10 @@ package org.fcrepo.upgrade.utils;
 
 import static org.apache.jena.rdf.model.ResourceFactory.createProperty;
 import static org.fcrepo.upgrade.utils.RdfConstants.ACCESS_CONTROL;
+import static org.fcrepo.upgrade.utils.RdfConstants.ACL_ACCESS_TO;
 import static org.fcrepo.upgrade.utils.RdfConstants.ACL_AGENT_CLASS;
 import static org.fcrepo.upgrade.utils.RdfConstants.ACL_AGENT_GROUP;
+import static org.fcrepo.upgrade.utils.RdfConstants.ACL_DEFAULT;
 import static org.fcrepo.upgrade.utils.RdfConstants.ACL_NS;
 import static org.fcrepo.upgrade.utils.RdfConstants.AUTHORIZATION;
 import static org.fcrepo.upgrade.utils.RdfConstants.FEDORA_LAST_MODIFIED_DATE;
@@ -223,6 +225,12 @@ public class F47ToF5UpgradeManagerTest {
                      sortedUris(acl.listObjectsOfProperty(ACL_AGENT_CLASS).toList()));
         assertEquals(List.of("http://localhost:8080/rest/group1"),
                      sortedUris(acl.listObjectsOfProperty(ACL_AGENT_GROUP).toList()));
+        // Fedora 4 applied the ACL to container1's descendants too, which Fedora 5+ does only with acl:default
+        assertEquals(List.of("http://localhost:8080/rest/container1"),
+                     sortedUris(acl.listObjectsOfProperty(ACL_DEFAULT).toList()).stream().distinct()
+                                   .collect(Collectors.toList()));
+        assertEquals(acl.listSubjectsWithProperty(ACL_ACCESS_TO).toSet(),
+                     acl.listSubjectsWithProperty(ACL_DEFAULT).toSet());
 
         final var group = RdfUtil.parseRdf(Path.of(output.toString(), "rest/group1.ttl"), Lang.TTL);
         final var groupResource = group.createResource("http://localhost:8080/rest/group1");

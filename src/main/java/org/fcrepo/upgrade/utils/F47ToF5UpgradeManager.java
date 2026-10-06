@@ -13,9 +13,12 @@ import static org.fcrepo.upgrade.utils.HttpConstants.LINK_HEADER;
 import static org.fcrepo.upgrade.utils.HttpConstants.LOCATION_HEADER;
 import static org.fcrepo.upgrade.utils.RdfConstants.ACCESS_CONTROL;
 import static org.fcrepo.upgrade.utils.RdfConstants.ACL;
+import static org.fcrepo.upgrade.utils.RdfConstants.ACL_ACCESS_TO;
+import static org.fcrepo.upgrade.utils.RdfConstants.ACL_ACCESS_TO_CLASS;
 import static org.fcrepo.upgrade.utils.RdfConstants.ACL_AGENT;
 import static org.fcrepo.upgrade.utils.RdfConstants.ACL_AGENT_CLASS;
 import static org.fcrepo.upgrade.utils.RdfConstants.ACL_AGENT_GROUP;
+import static org.fcrepo.upgrade.utils.RdfConstants.ACL_DEFAULT;
 import static org.fcrepo.upgrade.utils.RdfConstants.ACL_NS;
 import static org.fcrepo.upgrade.utils.RdfConstants.AUTHORIZATION;
 import static org.fcrepo.upgrade.utils.RdfConstants.EBUCORE_HAS_MIME_TYPE;
@@ -73,6 +76,7 @@ import org.apache.commons.io.FilenameUtils;
 import org.apache.jena.rdf.model.Model;
 import org.apache.jena.rdf.model.ModelFactory;
 import org.apache.jena.rdf.model.Property;
+import org.apache.jena.rdf.model.RDFNode;
 import org.apache.jena.rdf.model.Resource;
 import org.apache.jena.rdf.model.ResourceFactory;
 import org.apache.jena.rdf.model.Statement;
@@ -385,6 +389,7 @@ class F47ToF5UpgradeManager extends UpgradeManagerBase implements UpgradeManager
                     authTriples.add(model.createStatement(subject, agentPredicate(aclUri, x), object));
                 });
 
+                addInheritance(model, subject, protectedResource, authTriples);
                 authIndex.incrementAndGet();
                 if (isAuthorization.get()) {
                     authorizations.put(authName, authTriples);
@@ -428,6 +433,27 @@ class F47ToF5UpgradeManager extends UpgradeManagerBase implements UpgradeManager
             }
         }
         return file.getFileName().toString().endsWith("." + config.getSrcRdfExt());
+    }
+
+    /**
+     * Fedora 4 applies the ACL of a resource to all of its descendants that have no ACL of their own. Fedora 5+
+     * applies an ancestor's ACL only through authorizations with acl:default, so an authorization without one gets
+     * acl:default for each of its acl:accessTo resources, or for the protected resource if it grants by
+     * acl:accessToClass.
+     */
+    private void addInheritance(final Model model, final Resource subject, final String protectedResource,
+                                final List<Statement> authTriples) {
+        if (authTriples.stream().anyMatch(s -> s.getPredicate().equals(ACL_DEFAULT))) {
+            return;
+        }
+        final var defaults = new ArrayList<RDFNode>();
+        authTriples.stream().filter(s -> s.getPredicate().equals(ACL_ACCESS_TO))
+                   .forEach(s -> defaults.add(s.getObject()));
+        if (authTriples.stream().anyMatch(s -> s.getPredicate().equals(ACL_ACCESS_TO_CLASS))) {
+            defaults.add(createResource(protectedResource));
+        }
+        defaults.stream().distinct().forEach(target -> authTriples.add(model.createStatement(subject, ACL_DEFAULT,
+                                                                                               target)));
     }
 
     /**

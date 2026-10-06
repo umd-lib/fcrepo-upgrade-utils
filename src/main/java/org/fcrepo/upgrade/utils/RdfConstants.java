@@ -71,6 +71,9 @@ public class RdfConstants {
     public static final Property ACL_AGENT = createProperty(ACL_NS + "agent");
     public static final Property ACL_AGENT_CLASS = createProperty(ACL_NS + "agentClass");
     public static final Property ACL_AGENT_GROUP = createProperty(ACL_NS + "agentGroup");
+    public static final Property ACL_ACCESS_TO = createProperty(ACL_NS + "accessTo");
+    public static final Property ACL_ACCESS_TO_CLASS = createProperty(ACL_NS + "accessToClass");
+    public static final Property ACL_DEFAULT = createProperty(ACL_NS + "default");
 
     public static final String FOAF_NS = "http://xmlns.com/foaf/0.1/";
     public static final Resource FOAF_AGENT = ResourceFactory.createResource(FOAF_NS + "Agent");
