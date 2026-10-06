@@ -74,10 +74,16 @@ public class MigrationTaskManager {
      */
     public void submit(final ResourceInfo info) {
         LOGGER.debug("Submitting resource {} for processing", info.getFullId());
-        executorService.submit(new TaskWrapper(info,
-                new MigrateResourceTask(this, resourceMigrator, infoLogger, info)));
-
+        // Count the task before it can run: counted after, it could finish first and let the count reach zero
+        // while work remains
         count.incrementAndGet();
+        try {
+            executorService.submit(new TaskWrapper(info,
+                    new MigrateResourceTask(this, resourceMigrator, infoLogger, info)));
+        } catch (RuntimeException e) {
+            taskFinished();
+            throw e;
+        }
     }
 
     /**
@@ -88,11 +94,11 @@ public class MigrationTaskManager {
      */
     public void processImmediately(final ResourceInfo info) {
         LOGGER.debug("Processing resource {} immediately", info.getFullId());
+        // Count the task before running it, for the same reason as in submit()
+        count.incrementAndGet();
         new TaskWrapper(info,
                 new MigrateResourceTask(this, resourceMigrator, infoLogger, info))
                 .call();
-
-        count.incrementAndGet();
     }
 
     /**
@@ -141,6 +147,13 @@ public class MigrationTaskManager {
     /**
      * Adds remaining tasks to log
      */
+    private void taskFinished() {
+        count.decrementAndGet();
+        synchronized (lock) {
+            lock.notifyAll();
+        }
+    }
+
     @SuppressWarnings("unchecked")
     private void logRemainingTasks(final List<Runnable> remaining) {
         remaining.forEach(task -> {
@@ -182,10 +195,7 @@ public class MigrationTaskManager {
                 runnable.run();
                 return null;
             } finally {
-                count.decrementAndGet();
-                synchronized (lock) {
-                    lock.notifyAll();
-                }
+                taskFinished();
             }
         }
     }

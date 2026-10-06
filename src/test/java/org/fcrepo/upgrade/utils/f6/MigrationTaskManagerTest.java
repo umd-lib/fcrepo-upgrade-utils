@@ -157,6 +157,33 @@ public class MigrationTaskManagerTest {
         assertEquals(threadIds.get(1), threadIds.get(2));
     }
 
+    @Test
+    public void awaitCompletionWaitsForEveryArchivalGroupChild() throws InterruptedException {
+        final var agId = "ag-" + UUID.randomUUID();
+        final var parentId = randomId();
+        final var parentInfo = ResourceInfo.container(INFO_FEDORA, parentId, null, Paths.get("/"), "parent");
+        // Between one child finishing and the next starting there must always be a task counted as in flight.
+        // Each child is a chance for awaitCompletion to see none; many children make an early return near certain.
+        final int childCount = 20000;
+        final var children = new ArrayList<ResourceInfo>();
+        for (int i = 0; i < childCount; i++) {
+            children.add(ResourceInfo.container(parentId, join(parentId, "child" + i), agId, Paths.get("/"),
+                    "child" + i));
+        }
+        final var migrated = new AtomicInteger();
+
+        doAnswer(invocation -> {
+            migrated.incrementAndGet();
+            final ResourceInfo info = invocation.getArgument(0);
+            return info.equals(parentInfo) ? children : new ArrayList<ResourceInfo>();
+        }).when(resourceMigrator).migrate(Mockito.any());
+
+        manager.submit(parentInfo);
+        manager.awaitCompletion();
+
+        assertEquals("awaitCompletion returned before every child was migrated", childCount + 1, migrated.get());
+    }
+
 
     private void submitAndComplete(final ResourceInfo info) throws InterruptedException {
         manager.submit(info);
