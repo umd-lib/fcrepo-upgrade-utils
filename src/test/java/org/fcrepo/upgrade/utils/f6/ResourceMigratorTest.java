@@ -23,6 +23,7 @@ import org.junit.rules.TemporaryFolder;
 
 import java.io.File;
 import java.io.IOException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.net.URLEncoder;
@@ -35,6 +36,7 @@ import java.util.Comparator;
 import java.util.List;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
@@ -320,7 +322,7 @@ public class ResourceMigratorTest {
     }
 
     @Test
-    public void migrateBasicContainerAGWithoutVersionsAsOneVersion() {
+    public void migrateBasicContainerAGWithoutVersionsAsOneVersion() throws IOException {
         config.setArchivalGroupRdfTypes(FedoraTypes.LDP_BASIC_CONTAINER);
         migrator = new ResourceMigrator(config, migrationOcflFactory);
         final var info = containerInfo("container-with-children");
@@ -330,10 +332,32 @@ public class ResourceMigratorTest {
         migrator.commitArchivalGroup(info.getFullId());
 
         // One version for the whole group, rather than one per resource, each with a full inventory copy
+        assertEquals("v1", ocflHead(info.getFullId()));
         final var session = migrationOcflFactory.newSession(info.getFullId());
         assertEquals(1, session.listVersions(info.getFullId()).size());
         for (final var child : children) {
             assertEquals(child.getFullId(), 1, session.listVersions(child.getFullId()).size());
+        }
+    }
+
+    @Test
+    public void archivalGroupWithFailedResourceIsNotCommitted() {
+        config.setArchivalGroupRdfTypes(FedoraTypes.LDP_BASIC_CONTAINER);
+        migrator = new ResourceMigrator(config, migrationOcflFactory);
+        final var info = containerInfo("container-with-children");
+        final var id = info.getFullId();
+
+        final var children = migrate(info);
+        // A member whose RDF is missing fails, which fails the whole group
+        final var missing = ResourceInfo.container(id, join(id, "missing"), id,
+                rootInner.resolve(encode("container-with-children")), "missing");
+        assertThrows(RuntimeException.class, () -> migrator.migrate(missing));
+        children.forEach(this::migrateNoChildren);
+
+        assertThrows(IllegalStateException.class, () -> migrator.commitArchivalGroup(id));
+        assertFalse(migrationOcflFactory.newSession(id).containsResource(id));
+        for (final var child : children) {
+            assertFalse(migrationOcflFactory.newSession(id).containsResource(child.getFullId()));
         }
     }
 
@@ -355,6 +379,7 @@ public class ResourceMigratorTest {
         final var info = containerInfo("container-with-acl");
 
         migrateNoChildren(info);
+        migrator.commitArchivalGroup(info.getFullId());
 
         final var session = migrationOcflFactory.newSession(info.getFullId());
         final var headers = session.readHeaders(info.getFullId());
@@ -400,6 +425,7 @@ public class ResourceMigratorTest {
 
         final var children = migrate(info);
         children.forEach(this::migrateNoChildren);
+        migrator.commitArchivalGroup(id);
 
         final var session = migrationOcflFactory.newSession(id);
         final var headers = session.readHeaders(id);
@@ -429,6 +455,23 @@ public class ResourceMigratorTest {
         final var children = migrator.migrate(info);
         children.sort(Comparator.comparing(ResourceInfo::getFullId));
         return children;
+    }
+
+    /**
+     * The head version of an OCFL object, read from its inventory
+     */
+    private String ocflHead(final String objectId) throws IOException {
+        try (final var paths = Files.walk(output.resolve("data/ocfl-root"))) {
+            for (final var inventory : (Iterable<Path>) paths
+                    .filter(p -> p.getFileName().toString().equals("inventory.json"))::iterator) {
+                final var json = new ObjectMapper().readTree(inventory.toFile());
+                if (objectId.equals(json.get("id").asText()) && !inventory.getParent().getFileName().toString()
+                        .matches("v\\d+")) {
+                    return json.get("head").asText();
+                }
+            }
+        }
+        throw new AssertionError("No OCFL object " + objectId);
     }
 
     private void migrateNoChildren(final ResourceInfo info) {
