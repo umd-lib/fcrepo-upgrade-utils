@@ -7,9 +7,14 @@ package org.fcrepo.upgrade.utils;
 
 import static org.apache.jena.rdf.model.ResourceFactory.createProperty;
 import static org.fcrepo.upgrade.utils.RdfConstants.ACCESS_CONTROL;
+import static org.fcrepo.upgrade.utils.RdfConstants.ACL_AGENT_CLASS;
+import static org.fcrepo.upgrade.utils.RdfConstants.ACL_AGENT_GROUP;
 import static org.fcrepo.upgrade.utils.RdfConstants.ACL_NS;
 import static org.fcrepo.upgrade.utils.RdfConstants.AUTHORIZATION;
 import static org.fcrepo.upgrade.utils.RdfConstants.FEDORA_LAST_MODIFIED_DATE;
+import static org.fcrepo.upgrade.utils.RdfConstants.FOAF_AGENT;
+import static org.fcrepo.upgrade.utils.RdfConstants.VCARD_GROUP;
+import static org.fcrepo.upgrade.utils.RdfConstants.VCARD_HAS_MEMBER;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
@@ -31,6 +36,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.IOUtils;
+import org.apache.jena.rdf.model.RDFNode;
 import org.apache.jena.riot.Lang;
 import org.apache.jena.vocabulary.RDF;
 import org.fcrepo.upgrade.utils.f6.RdfUtil;
@@ -185,6 +191,49 @@ public class F47ToF5UpgradeManagerTest {
         final File output = upgrade(input);
 
         assertEquals(List.of("user1", "user2"), container1AclAgents(output));
+    }
+
+    @Test
+    public void testUpgradeConvertsFedora4WebacAgentsAndGroups() throws Exception {
+        final File input = copyOfExport("4.7.5-export");
+        final var authorization = input.toPath().resolve("rest/acl/authZ1.ttl");
+        Files.writeString(authorization, Files.readString(authorization).replace(
+                "        ns001:mode             ns001:Read ;\n",
+                "        ns001:mode             ns001:Read ;\n" +
+                "        ns001:agent            foaf:Agent ;\n" +
+                "        ns001:agentClass       <http://localhost:8080/rest/group1> ;\n" +
+                "        ns001:agentClass       <http://localhost:8080/rest/missing-group> ;\n" +
+                "        ns001:agentClass       <https://other.example.org/rest/group1> ;\n"));
+        Files.writeString(input.toPath().resolve("rest/group1.ttl"), String.join("\n",
+                "@prefix fedora: <http://fedora.info/definitions/v4/repository#> .",
+                "@prefix ldp: <http://www.w3.org/ns/ldp#> .",
+                "@prefix foaf: <http://xmlns.com/foaf/0.1/> .",
+                "<http://localhost:8080/rest/group1> a fedora:Container, fedora:Resource, ldp:RDFSource, ldp:Container,",
+                "        foaf:Group ;",
+                "    foaf:member \"user3\", \"user4\" ;",
+                "    fedora:hasParent <http://localhost:8080/rest/> ."));
+
+        final File output = upgrade(input);
+
+        final var acl = RdfUtil.parseRdf(Path.of(output.toString(), "rest/container1/fcr%3Aacl.ttl"), Lang.TTL);
+        // Everyone, and a group in the repository, keep their meaning; anything Fedora 4 ignored stays as it was
+        assertEquals(List.of("user1", "user2"), container1AclAgents(output));
+        assertEquals(List.of("http://localhost:8080/rest/missing-group", FOAF_AGENT.getURI(),
+                             "https://other.example.org/rest/group1"),
+                     sortedUris(acl.listObjectsOfProperty(ACL_AGENT_CLASS).toList()));
+        assertEquals(List.of("http://localhost:8080/rest/group1"),
+                     sortedUris(acl.listObjectsOfProperty(ACL_AGENT_GROUP).toList()));
+
+        final var group = RdfUtil.parseRdf(Path.of(output.toString(), "rest/group1.ttl"), Lang.TTL);
+        final var groupResource = group.createResource("http://localhost:8080/rest/group1");
+        assertTrue(group.contains(groupResource, RDF.type, VCARD_GROUP));
+        assertEquals(List.of("user3", "user4"), group.listObjectsOfProperty(groupResource, VCARD_HAS_MEMBER).toList()
+                                                     .stream().map(member -> member.asLiteral().getString())
+                                                     .sorted().collect(Collectors.toList()));
+    }
+
+    private static List<String> sortedUris(final List<RDFNode> nodes) {
+        return nodes.stream().map(node -> node.asResource().getURI()).sorted().collect(Collectors.toList());
     }
 
     private File copyOfExport(final String name) throws IOException {

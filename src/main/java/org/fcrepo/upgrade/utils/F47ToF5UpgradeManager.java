@@ -13,6 +13,9 @@ import static org.fcrepo.upgrade.utils.HttpConstants.LINK_HEADER;
 import static org.fcrepo.upgrade.utils.HttpConstants.LOCATION_HEADER;
 import static org.fcrepo.upgrade.utils.RdfConstants.ACCESS_CONTROL;
 import static org.fcrepo.upgrade.utils.RdfConstants.ACL;
+import static org.fcrepo.upgrade.utils.RdfConstants.ACL_AGENT;
+import static org.fcrepo.upgrade.utils.RdfConstants.ACL_AGENT_CLASS;
+import static org.fcrepo.upgrade.utils.RdfConstants.ACL_AGENT_GROUP;
 import static org.fcrepo.upgrade.utils.RdfConstants.ACL_NS;
 import static org.fcrepo.upgrade.utils.RdfConstants.AUTHORIZATION;
 import static org.fcrepo.upgrade.utils.RdfConstants.EBUCORE_HAS_MIME_TYPE;
@@ -21,6 +24,9 @@ import static org.fcrepo.upgrade.utils.RdfConstants.FEDORA_CREATED_DATE;
 import static org.fcrepo.upgrade.utils.RdfConstants.FEDORA_LAST_MODIFIED_BY;
 import static org.fcrepo.upgrade.utils.RdfConstants.FEDORA_LAST_MODIFIED_DATE;
 import static org.fcrepo.upgrade.utils.RdfConstants.FEDORA_VERSION;
+import static org.fcrepo.upgrade.utils.RdfConstants.FOAF_AGENT;
+import static org.fcrepo.upgrade.utils.RdfConstants.FOAF_GROUP;
+import static org.fcrepo.upgrade.utils.RdfConstants.FOAF_MEMBER;
 import static org.fcrepo.upgrade.utils.RdfConstants.LDP_BASIC_CONTAINER;
 import static org.fcrepo.upgrade.utils.RdfConstants.LDP_CONTAINER;
 import static org.fcrepo.upgrade.utils.RdfConstants.LDP_CONTAINER_TYPES;
@@ -28,6 +34,8 @@ import static org.fcrepo.upgrade.utils.RdfConstants.LDP_NON_RDF_SOURCE;
 import static org.fcrepo.upgrade.utils.RdfConstants.LDP_RDF_SOURCE;
 import static org.fcrepo.upgrade.utils.RdfConstants.MEMENTO;
 import static org.fcrepo.upgrade.utils.RdfConstants.NON_RDF_SOURCE_DESCRIPTION;
+import static org.fcrepo.upgrade.utils.RdfConstants.VCARD_GROUP;
+import static org.fcrepo.upgrade.utils.RdfConstants.VCARD_HAS_MEMBER;
 import static org.slf4j.LoggerFactory.getLogger;
 
 import java.io.BufferedInputStream;
@@ -51,6 +59,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -63,6 +72,7 @@ import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.FilenameUtils;
 import org.apache.jena.rdf.model.Model;
 import org.apache.jena.rdf.model.ModelFactory;
+import org.apache.jena.rdf.model.Property;
 import org.apache.jena.rdf.model.Resource;
 import org.apache.jena.rdf.model.ResourceFactory;
 import org.apache.jena.rdf.model.Statement;
@@ -284,6 +294,15 @@ class F47ToF5UpgradeManager extends UpgradeManagerBase implements UpgradeManager
             rewriteModel.set(true);
         }
 
+        // Fedora 4 WebAC reads a group's members from foaf:Group and foaf:member; Fedora 5+ only from vcard:Group
+        // and vcard:hasMember. Add the vcard form so groups named in ACLs keep their members.
+        for (final Resource group : model.listSubjectsWithProperty(RDF.type, FOAF_GROUP).toList()) {
+            model.add(group, RDF.type, VCARD_GROUP);
+            model.listObjectsOfProperty(group, FOAF_MEMBER).toList()
+                 .forEach(member -> model.add(group, VCARD_HAS_MEMBER, member));
+            rewriteModel.set(true);
+        }
+
         // rewrite only if the model has changed.
         if (rewriteModel.get()) {
             try {
@@ -363,7 +382,7 @@ class F47ToF5UpgradeManager extends UpgradeManagerBase implements UpgradeManager
                     if (x.getPredicate().equals(RDF.type) && x.getObject().asResource().equals(AUTHORIZATION)) {
                         isAuthorization.set(true);
                     }
-                    authTriples.add(model.createStatement(subject, x.getPredicate(), object));
+                    authTriples.add(model.createStatement(subject, agentPredicate(aclUri, x), object));
                 });
 
                 authIndex.incrementAndGet();
@@ -409,6 +428,49 @@ class F47ToF5UpgradeManager extends UpgradeManagerBase implements UpgradeManager
             }
         }
         return file.getFileName().toString().endsWith("." + config.getSrcRdfExt());
+    }
+
+    /**
+     * Fedora 4 WebAC merges acl:agent and acl:agentClass values: foaf:Agent in either means everyone, and an
+     * acl:agentClass naming a resource in the repository is a group. Fedora 5+ follows the Solid WebAC spec instead,
+     * where everyone is acl:agentClass foaf:Agent and a group is acl:agentGroup, so keep their meaning by moving them
+     * to those predicates. An acl:agentClass outside the repository was ignored by Fedora 4 and is left as it is.
+     *
+     * @param aclUri the uri of the ACL the authorization belongs to
+     * @param statement a statement of the authorization
+     * @return the predicate the statement should have in Fedora 5+
+     */
+    private Property agentPredicate(final String aclUri, final Statement statement) {
+        final var predicate = statement.getPredicate();
+        final var object = statement.getObject();
+        if (predicate.equals(ACL_AGENT) && object.equals(FOAF_AGENT)) {
+            return ACL_AGENT_CLASS;
+        }
+        if (predicate.equals(ACL_AGENT_CLASS) && object.isURIResource() && !object.equals(FOAF_AGENT)
+                && isExportedResource(aclUri, object.asResource().getURI())) {
+            return ACL_AGENT_GROUP;
+        }
+        return predicate;
+    }
+
+    /**
+     * @param aclUri the uri of an ACL in the export
+     * @param uri a uri
+     * @return true if the uri names a resource on the same server as the ACL that is in the export
+     */
+    private boolean isExportedResource(final String aclUri, final String uri) {
+        final var acl = create(aclUri);
+        final var resource = create(uri);
+        if (!Objects.equals(acl.getScheme(), resource.getScheme())
+                || !Objects.equals(acl.getAuthority(), resource.getAuthority()) || resource.getPath() == null) {
+            return false;
+        }
+        final var exported = Files.exists(
+                Path.of(this.config.getInputDir().toPath().toString(), resource.getPath() + "." + config.getSrcRdfExt()));
+        if (!exported) {
+            LOGGER.warn("acl:agentClass {} in {} is not in the export, so it is left as acl:agentClass", uri, aclUri);
+        }
+        return exported;
     }
 
     private String locateBinaryHeadersPrefixForVersionedBinary(final Path newLocation) {

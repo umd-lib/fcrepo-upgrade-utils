@@ -68,6 +68,18 @@ public class RdfConstants {
             createProperty(FEDORA_NS + "created");
 
     public static final Property ACCESS_CONTROL = createProperty(ACL_NS + "accessControl");
+    public static final Property ACL_AGENT = createProperty(ACL_NS + "agent");
+    public static final Property ACL_AGENT_CLASS = createProperty(ACL_NS + "agentClass");
+    public static final Property ACL_AGENT_GROUP = createProperty(ACL_NS + "agentGroup");
+
+    public static final String FOAF_NS = "http://xmlns.com/foaf/0.1/";
+    public static final Resource FOAF_AGENT = ResourceFactory.createResource(FOAF_NS + "Agent");
+    public static final Resource FOAF_GROUP = ResourceFactory.createResource(FOAF_NS + "Group");
+    public static final Property FOAF_MEMBER = createProperty(FOAF_NS + "member");
+
+    public static final String VCARD_NS = "http://www.w3.org/2006/vcard/ns#";
+    public static final Resource VCARD_GROUP = ResourceFactory.createResource(VCARD_NS + "Group");
+    public static final Property VCARD_HAS_MEMBER = createProperty(VCARD_NS + "hasMember");
 
     public static final Property HAS_FIXITY_RESULT =
             createProperty(PREMIS_NS + "hasFixity");
