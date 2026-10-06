@@ -36,6 +36,7 @@ import java.util.List;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
@@ -314,6 +315,72 @@ public class ResourceMigratorTest {
                 "src/test/resources/5.1-to-6-expected/data/ocfl-root/56d/ed5/34e/" +
                      "56ded534e5e1683bbffd6724f71ae467eac4689294da024e7e9cfde511944303/v1/content/fcr-container.nt"));
         assertHeadSame(containerChild.getFullId(), expectedContainerHeaders, expectedContent);
+    }
+
+    @Test
+    public void migrateBasicContainerAGWithAcl() {
+        config.setArchivalGroupRdfTypes(FedoraTypes.LDP_BASIC_CONTAINER);
+        migrator = new ResourceMigrator(config, migrationOcflFactory);
+        final var info = containerInfo("container-with-acl");
+
+        migrateNoChildren(info);
+
+        final var session = migrationOcflFactory.newSession(info.getFullId());
+        final var headers = session.readHeaders(info.getFullId());
+        assertTrue(headers.isArchivalGroup());
+        assertTrue(headers.isObjectRoot());
+
+        // The AG's own ACL lives in the AG's object and must be recorded as a member of it
+        final var aclId = join(info.getFullId(), FCR_ACL);
+        assertTrue(aclId + " should exist", session.containsResource(aclId));
+        assertEquals(info.getFullId(), session.readHeaders(aclId).getArchivalGroupId());
+    }
+
+    @Test
+    public void migrateBasicContainerAGWithVersions() {
+        config.setArchivalGroupRdfTypes(FedoraTypes.LDP_BASIC_CONTAINER);
+        migrator = new ResourceMigrator(config, migrationOcflFactory);
+        final var info = containerInfo("container-with-versions");
+
+        migrateNoChildren(info);
+
+        final var expectedVersions = expectedOcflFactory.newSession(info.getFullId())
+                .listVersions(info.getFullId());
+        final var session = migrationOcflFactory.newSession(info.getFullId());
+        final var versions = session.listVersions(info.getFullId());
+        assertEquals(expectedVersions.size(), versions.size());
+
+        // Every version of the AG must be the AG root, not a member of itself
+        for (final var version : versions) {
+            final var headers = session.readHeaders(info.getFullId(), version.getVersionNumber());
+            assertTrue(headers.isArchivalGroup());
+            assertTrue(headers.isObjectRoot());
+            assertNull(headers.getArchivalGroupId());
+        }
+    }
+
+    @Test
+    public void migrateResumedAGRoot() {
+        config.setArchivalGroupRdfTypes(FedoraTypes.LDP_BASIC_CONTAINER);
+        migrator = new ResourceMigrator(config, migrationOcflFactory);
+        // A resource-info file written after a failed AG root records the root as its own archival group
+        final var id = id("container-with-children");
+        final var info = ResourceInfo.container(ROOT, id, id, rootInner, encode("container-with-children"));
+
+        final var children = migrate(info);
+        children.forEach(this::migrateNoChildren);
+
+        final var session = migrationOcflFactory.newSession(id);
+        final var headers = session.readHeaders(id);
+        assertTrue(headers.isArchivalGroup());
+        assertTrue(headers.isObjectRoot());
+        assertNull(headers.getArchivalGroupId());
+
+        assertEquals(2, children.size());
+        for (final var child : children) {
+            assertEquals(id, child.getArchivalGroupId());
+            assertEquals(id, session.readHeaders(child.getFullId()).getArchivalGroupId());
+        }
     }
 
     private ResourceHeaders.Builder expectedBuilder(final String id) {

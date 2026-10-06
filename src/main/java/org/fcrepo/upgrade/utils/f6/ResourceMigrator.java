@@ -152,6 +152,14 @@ public class ResourceMigrator {
 
     private void migrateContainer(final ResourceInfo info) {
         final var containerDir = info.getInnerDirectory();
+        final var currentRdf = readRdf(info.getOuterDirectory().resolve(rdfFile(info.getNameEncoded())));
+
+        // Decide once, from the current state, for every version: an OCFL object cannot switch between
+        // being an archival group and not being one from one version to the next
+        final boolean isArchivalGroup = checkForArchivalGroup(info, currentRdf);
+        if (isArchivalGroup) {
+            info.setArchivalGroupId(info.getFullId());
+        }
 
         Instant lastVersionUpdate = null;
 
@@ -164,32 +172,26 @@ public class ResourceMigrator {
                 lastVersionUpdate = RdfUtil.getDateValue(FEDORA_LAST_MODIFIED_DATE, rdf);
                 final var mementoInstant = parseMemento(version);
 
-                migrateContainerVersion(info, containerDir, rdf, mementoInstant);
+                migrateContainerVersion(info, containerDir, rdf, mementoInstant, isArchivalGroup);
             }
         }
 
-        final var rdf = readRdf(info.getOuterDirectory().resolve(rdfFile(info.getNameEncoded())));
-        final var currentUpdate = getInstantPropertyFromRdf(info.getFullId(), FEDORA_LAST_MODIFIED_DATE, rdf,
+        final var currentUpdate = getInstantPropertyFromRdf(info.getFullId(), FEDORA_LAST_MODIFIED_DATE, currentRdf,
                                                             Instant.now());
         // only migrate the state if it's different from the most recent memento
         if (lastVersionUpdate == null || !lastVersionUpdate.equals(currentUpdate)) {
-            migrateContainerVersion(info, containerDir, rdf, currentUpdate);
+            migrateContainerVersion(info, containerDir, currentRdf, currentUpdate, isArchivalGroup);
         }
     }
 
     private void migrateContainerVersion(final ResourceInfo info,
                                          final Path containerDir,
                                          final Model rdf,
-                                         final Instant timestamp) {
+                                         final Instant timestamp,
+                                         final boolean isArchivalGroup) {
         final var interactionModel = identifyInteractionModel(info.getFullId(), rdf);
-        final boolean isArchivalGroup = checkForArchivalGroup(info, rdf);
 
         final var headers = createContainerHeaders(info, interactionModel, rdf, isArchivalGroup);
-
-        // Set this after creating headers since we don't record the id on the archival group itself
-        if (isArchivalGroup) {
-            info.setArchivalGroupId(info.getFullId());
-        }
 
         doInSession(getIdForSession(headers, info.getFullId()), session -> {
             final var isFirst = !session.containsResource(info.getFullId());
@@ -198,7 +200,9 @@ public class ResourceMigrator {
             session.writeResource(headers, writeRdf(rdf));
 
             if (isFirst && hasAcl(containerDir)) {
-                migrateAcl(info.getFullId(), headers.getArchivalGroupId(), containerDir, session);
+                // An archival group's own ACL is a member of that archival group
+                final var aclArchivalGroupId = isArchivalGroup ? info.getFullId() : headers.getArchivalGroupId();
+                migrateAcl(info.getFullId(), aclArchivalGroupId, containerDir, session);
             }
 
             session.commit();
@@ -459,8 +463,15 @@ public class ResourceMigrator {
     }
 
     private boolean checkForArchivalGroup(final ResourceInfo info, final Model rdf) {
-        // False if no AG types configured, or if the resource is already in an AG
-        if (archivalGroupRdfTypes == null || archivalGroupRdfTypes.isEmpty() || info.getArchivalGroupId() != null) {
+        if (archivalGroupRdfTypes == null || archivalGroupRdfTypes.isEmpty()) {
+            return false;
+        }
+        // A resource recorded as its own archival group (e.g. resumed from a resource info file) still is one
+        if (info.getFullId().equals(info.getArchivalGroupId())) {
+            return true;
+        }
+        // False if the resource is already in an AG, since AGs cannot be nested
+        if (info.getArchivalGroupId() != null) {
             return false;
         }
 
@@ -536,10 +547,12 @@ public class ResourceMigrator {
                                                    final InteractionModel interactionModel,
                                                    final Model rdf,
                                                    final boolean isArchivalGroup) {
-        final var headers = createCommonHeaders(info.getParentId(), info.getFullId(), info.getArchivalGroupId(),
+        // The id is not recorded on the archival group itself, only on its members
+        final var archivalGroupId = isArchivalGroup ? null : info.getArchivalGroupId();
+        final var headers = createCommonHeaders(info.getParentId(), info.getFullId(), archivalGroupId,
                 interactionModel, rdf);
         headers.withArchivalGroup(isArchivalGroup);
-        headers.withObjectRoot(info.getArchivalGroupId() == null);
+        headers.withObjectRoot(archivalGroupId == null);
         return headers.build();
     }
 
