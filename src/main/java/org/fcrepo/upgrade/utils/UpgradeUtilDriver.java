@@ -174,6 +174,7 @@ public class UpgradeUtilDriver {
         config.setFedoraUserAddress(cmd.getOptionValue("migration-user-address"));
 
         config.setSkipAcls(cmd.hasOption("skip-acls"));
+        config.setLinkBinaries(cmd.hasOption("link-binaries"));
 
         config.setWriteToS3(cmd.hasOption("write-to-s3"));
         config.setS3Region(cmd.getOptionValue("s3-region"));
@@ -284,6 +285,15 @@ public class UpgradeUtilDriver {
                 .hasArg(true)
                 .desc("The address of the user OCFL versions are attributed to. Default: "
                         + Config.DEFAULT_USER_ADDRESS)
+                .required(false)
+                .build());
+        configOptions.addOption(Option.builder()
+                .longOpt("link-binaries")
+                .hasArg(false)
+                .desc("When migrating from 4.7.x to 5+, link binary content into the output instead of copying "
+                        + "it: a symbolic link stays a symbolic link to the same target, and a regular file is hard "
+                        + "linked (copied if the output is on another file system). The content is only read by "
+                        + "the migration to 6+.")
                 .required(false)
                 .build());
         configOptions.addOption(Option.builder()

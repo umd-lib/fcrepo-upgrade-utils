@@ -125,7 +125,8 @@ class F47ToF5UpgradeManager extends UpgradeManagerBase implements UpgradeManager
     private void processDirectory(final File dir) {
         LOGGER.info("Processing directory: {}", dir.getAbsolutePath());
         try (final Stream<Path> walk = Files.walk(dir.toPath())) {
-            walk.filter(Files::isRegularFile).forEach(this::processFile);
+            // A symbolic link is processed even if it is broken, so that the break fails loudly in processFile
+            walk.filter(p -> Files.isRegularFile(p) || Files.isSymbolicLink(p)).forEach(this::processFile);
         } catch (Exception e) {
             e.printStackTrace();
         }
@@ -157,8 +158,12 @@ class F47ToF5UpgradeManager extends UpgradeManagerBase implements UpgradeManager
 
         try {
             Files.createDirectories(newLocation.getParent());
-            LOGGER.debug("copy file {} to {}", path, newLocation);
-            FileUtils.copyFile(path.toFile(), newLocation.toFile());
+            if (config.isLinkBinaries() && isBinaryContent(path)) {
+                linkBinary(path, newLocation);
+            } else {
+                LOGGER.debug("copy file {} to {}", path, newLocation);
+                FileUtils.copyFile(path.toFile(), newLocation.toFile());
+            }
             if (newLocation.toString().endsWith(config.getSrcRdfExt())) {
                 upgradeRdfAndCreateHeaders(versionTimestamp, newLocation);
                 LOGGER.debug("File upgraded: {}", newLocation);
@@ -169,6 +174,35 @@ class F47ToF5UpgradeManager extends UpgradeManagerBase implements UpgradeManager
 
         } catch (IOException e) {
             e.printStackTrace();
+        }
+    }
+
+    private static boolean isBinaryContent(final Path path) {
+        return path.getFileName().toString().endsWith(".binary");
+    }
+
+    /**
+     * Link a binary's content into the output instead of copying it. A symbolic link is reproduced as a symbolic
+     * link to the same target, which must exist; a regular file is hard linked, or copied when the output is on
+     * another file system.
+     */
+    private void linkBinary(final Path path, final Path newLocation) throws IOException {
+        Files.deleteIfExists(newLocation);
+        if (Files.isSymbolicLink(path)) {
+            final Path target = Files.readSymbolicLink(path);
+            if (!Files.exists(path)) {
+                throw new IOException("Binary " + path + " links to " + target + ", which does not exist");
+            }
+            LOGGER.debug("link file {} to {}", newLocation, target);
+            Files.createSymbolicLink(newLocation, target);
+            return;
+        }
+        try {
+            LOGGER.debug("hard link file {} to {}", newLocation, path);
+            Files.createLink(newLocation, path);
+        } catch (final IOException | UnsupportedOperationException e) {
+            LOGGER.debug("cannot hard link {} ({}); copying it", path, e.getMessage());
+            FileUtils.copyFile(path.toFile(), newLocation.toFile());
         }
     }
 

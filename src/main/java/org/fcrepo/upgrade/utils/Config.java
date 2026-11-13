@@ -42,6 +42,7 @@ public class Config {
     private boolean forceWindowsMode = false;
     private Path resourceInfoFile;
     private boolean skipAcls = false;
+    private boolean linkBinaries = false;
     private String archivalGroupRdfTypes;
 
     // S3 Options
@@ -272,6 +273,22 @@ public class Config {
     }
 
     /**
+     * @return true if binary content should be linked into the output rather than copied
+     */
+    public boolean isLinkBinaries() {
+        return linkBinaries;
+    }
+
+    /**
+     * @param linkBinaries true if binary content should be linked into the output rather than copied: a symbolic
+     *                     link is reproduced as a symbolic link to the same target, and a regular file is hard
+     *                     linked (or copied, where the output is on another file system)
+     */
+    public void setLinkBinaries(final boolean linkBinaries) {
+        this.linkBinaries = linkBinaries;
+    }
+
+    /**
      * @return RDF types that identify Archival Groups, comma separated
      */
     public String getArchivalGroupRdfTypes() {
@@ -426,6 +443,7 @@ public class Config {
                 ", fedoraUserAddress='" + fedoraUserAddress + '\'' +
                 ", forceWindowsMode=" + forceWindowsMode +
                 ", skipAcls=" + skipAcls +
+                ", linkBinaries=" + linkBinaries +
                 ", writeToS3=" + writeToS3 +
                 ", s3Region='" + s3Region + '\'' +
                 ", s3Endpoint='" + s3Endpoint + '\'' +

@@ -112,6 +112,21 @@ public class F5ToF6UpgradeManagerTest {
     }
 
     @Test
+    public void migrateBinaryReadThroughSymbolicLink() throws IOException {
+        final var input = tempFolder.newFolder().toPath().resolve("export");
+        org.apache.commons.io.FileUtils.copyDirectory(new File("src/test/resources/5.1-export"), input.toFile());
+        final var binary = input.resolve("rest/simple-binary.binary");
+        final var stored = tempFolder.newFolder().toPath().resolve("simple-binary-content");
+        Files.move(binary, stored);
+        Files.createSymbolicLink(binary, stored);
+        config.setInputDir(input.toFile());
+
+        UpgradeManagerFactory.create(config).start();
+
+        assertMigration(Paths.get("src/test/resources/5.1-to-6-expected"));
+    }
+
+    @Test
     public void migrateFromResourceInfoFile() throws IOException {
         final var input = Paths.get("src/test/resources/5.1-export");
         final var root = ResourceInfo.container("info:fedora", "info:fedora", null, input, "rest");

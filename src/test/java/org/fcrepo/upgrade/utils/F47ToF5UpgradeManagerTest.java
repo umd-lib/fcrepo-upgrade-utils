@@ -404,6 +404,72 @@ public class F47ToF5UpgradeManagerTest {
                      lastModifiedStatement.getSubject().getURI());
     }
 
+    /**
+     * A copy of the 4.7.5 export whose current binary is a symbolic link to its content in a separate "store".
+     */
+    private File exportWithLinkedBinary(final File tmpDir) throws IOException {
+        final File input = new File(tmpDir, "input");
+        FileUtils.copyDirectory(new File(TARGET_DIR + "/test-classes/4.7.5-export"), input);
+        final Path binary = input.toPath().resolve("rest/container1/testbinary.binary");
+        final Path stored = tmpDir.toPath().resolve("store/testbinary-content");
+        Files.createDirectories(stored.getParent());
+        Files.move(binary, stored);
+        Files.createSymbolicLink(binary, stored.toAbsolutePath());
+        return input;
+    }
+
+    private Config linkBinariesConfig(final File input, final File output) {
+        final var config = new Config();
+        config.setSourceVersion(FedoraVersion.V_4_7_5);
+        config.setTargetVersion(FedoraVersion.V_5);
+        config.setInputDir(input);
+        config.setOutputDir(output);
+        config.setLinkBinaries(true);
+        return config;
+    }
+
+    @Test
+    public void testUpgradeLinkBinaries() throws Exception {
+        final File tmpDir = tempFolder.newFolder();
+        final File input = exportWithLinkedBinary(tmpDir);
+        final File output = new File(tmpDir, "output");
+        output.mkdir();
+
+        UpgradeManagerFactory.create(linkBinariesConfig(input, output)).start();
+
+        // A symbolic link stays a link to the same content
+        final Path linked = output.toPath().resolve("rest/container1/testbinary.binary");
+        assertTrue(Files.isSymbolicLink(linked));
+        assertEquals(Files.readSymbolicLink(input.toPath().resolve("rest/container1/testbinary.binary")),
+                Files.readSymbolicLink(linked));
+        // A regular file (an old version's content) is hard linked rather than copied
+        final Path version = output.toPath().resolve(
+                "rest/container1/testbinary/fcr%3Aversions/20201015053717.binary");
+        assertTrue(Files.isRegularFile(version, java.nio.file.LinkOption.NOFOLLOW_LINKS));
+        assertEquals(Files.getAttribute(input.toPath().resolve(
+                        "rest/container1/testbinary/fcr%3Aversions/version.20201014223717.binary"), "unix:ino"),
+                Files.getAttribute(version, "unix:ino"));
+        // RDF and headers are still upgraded
+        assertTrue(new File(output, "rest/container1/testbinary/fcr%3Ametadata.ttl").exists());
+        assertTrue(new File(output, "rest/container1/testbinary.binary.headers").exists());
+    }
+
+    @Test
+    public void testUpgradeLinkBinariesSkipsBrokenLink() throws Exception {
+        final File tmpDir = tempFolder.newFolder();
+        final File input = exportWithLinkedBinary(tmpDir);
+        Files.delete(tmpDir.toPath().resolve("store/testbinary-content"));
+        final File output = new File(tmpDir, "output");
+        output.mkdir();
+
+        UpgradeManagerFactory.create(linkBinariesConfig(input, output)).start();
+
+        // The broken link is reported (as a stack trace) and not reproduced
+        final Path linked = output.toPath().resolve("rest/container1/testbinary.binary");
+        assertFalse(Files.exists(linked, java.nio.file.LinkOption.NOFOLLOW_LINKS));
+        assertTrue(new File(output, "rest/container1/testbinary/fcr%3Ametadata.ttl").exists());
+    }
+
     @Test
     public void testUpgradeSkipAcls() throws Exception {
         //prepare
