@@ -33,6 +33,7 @@ import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3AsyncClient;
+import software.amazon.awssdk.transfer.s3.S3TransferManager;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -119,9 +120,12 @@ public class UpgradeManagerFactory {
         final OcflStorage storage;
 
         if (config.isWriteToS3()) {
+            final var s3Client = s3Client(config);
             storage = OcflStorageBuilder.builder()
                                         .cloud(OcflS3Client.builder()
-                            .s3Client(s3Client(config))
+                            .s3Client(s3Client)
+                            // ocfl-java 2 uploads and downloads files through a transfer manager, and requires one
+                            .transferManager(S3TransferManager.builder().s3Client(s3Client).build())
                             .bucket(config.getS3Bucket())
                             .repoPrefix(config.getS3Prefix())
                             .build())
