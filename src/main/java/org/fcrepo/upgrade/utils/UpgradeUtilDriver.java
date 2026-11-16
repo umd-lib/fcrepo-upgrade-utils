@@ -175,6 +175,7 @@ public class UpgradeUtilDriver {
 
         config.setSkipAcls(cmd.hasOption("skip-acls"));
         config.setLinkBinaries(cmd.hasOption("link-binaries"));
+        config.setRequireEmptyOutput(cmd.hasOption("require-empty-output"));
 
         config.setWriteToS3(cmd.hasOption("write-to-s3"));
         config.setS3Region(cmd.getOptionValue("s3-region"));
@@ -285,6 +286,14 @@ public class UpgradeUtilDriver {
                 .hasArg(true)
                 .desc("The address of the user OCFL versions are attributed to. Default: "
                         + Config.DEFAULT_USER_ADDRESS)
+                .required(false)
+                .build());
+        configOptions.addOption(Option.builder()
+                .longOpt("require-empty-output")
+                .hasArg(false)
+                .desc("When migrating to 6+, fail before migrating anything if the OCFL storage root already "
+                        + "holds objects. A resource that is already in the storage root is otherwise skipped, "
+                        + "which resumes an interrupted migration but keeps content left by an earlier one.")
                 .required(false)
                 .build());
         configOptions.addOption(Option.builder()

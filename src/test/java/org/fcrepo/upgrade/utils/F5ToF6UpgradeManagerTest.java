@@ -142,6 +142,86 @@ public class F5ToF6UpgradeManagerTest {
     }
 
     @Test
+    public void migrateAgainObjectsWhoseCreationWasInterrupted() throws IOException {
+        config.setInputDir(new File("src/test/resources/5.1-export"));
+        UpgradeManagerFactory.create(config).start();
+
+        // A migration killed while storing a new object leaves it without its root inventory
+        final var ocflRoot = out.resolve("data").resolve("ocfl-root");
+        final Set<Path> inventories;
+        try (final var files = Files.walk(ocflRoot)) {
+            inventories = files.filter(f -> f.getFileName().toString().startsWith("inventory.json"))
+                    .filter(f -> Files.exists(f.resolveSibling("0=ocfl_object_1.1")))
+                    .collect(Collectors.toSet());
+        }
+        assertTrue(inventories.size() > 2);
+        for (final var inventory : inventories) {
+            Files.delete(inventory);
+        }
+
+        UpgradeManagerFactory.create(config).start();
+
+        assertMigration(Paths.get("src/test/resources/5.1-to-6-expected"));
+    }
+
+    @Test
+    public void migrateAgainLeavesArchivalGroupsAsTheyAre() {
+        config.setInputDir(new File("src/test/resources/5.1-export"));
+        config.setArchivalGroupRdfTypes("http://www.w3.org/ns/ldp#BasicContainer");
+        UpgradeManagerFactory.create(config).start();
+        final var ocflRoot = out.resolve("data").resolve("ocfl-root");
+        final var files = listAllFiles(ocflRoot);
+
+        // As after a migration that was killed: everything is walked again from the root
+        UpgradeManagerFactory.create(config).start();
+
+        assertEquals(files, listAllFiles(ocflRoot));
+    }
+
+    @Test
+    public void failWhenOutputMustBeEmptyAndIsNot() {
+        config.setInputDir(new File("src/test/resources/5.1-export"));
+        config.setRequireEmptyOutput(true);
+        UpgradeManagerFactory.create(config).start();
+
+        assertThrows(IllegalStateException.class, () -> UpgradeManagerFactory.create(config));
+
+        config.setRequireEmptyOutput(false);
+        UpgradeManagerFactory.create(config).start();
+        assertMigration(Paths.get("src/test/resources/5.1-to-6-expected"));
+    }
+
+    @Test
+    public void resumeArchivalGroupListedWithOneOfItsMembers() throws IOException {
+        final var input = Paths.get("src/test/resources/5.1-export");
+        final var groupId = "info:fedora/container-with-children";
+        final var group = ResourceInfo.container("info:fedora", groupId, groupId, input.resolve("rest"),
+                "container-with-children");
+        final var member = ResourceInfo.binary(groupId, groupId + "/binary-child", groupId,
+                input.resolve("rest").resolve("container-with-children"), "binary-child");
+        final var mapper = new ObjectMapper();
+        final var infoFile = tempFolder.newFile().toPath();
+        // The member twice and before its group, as a failed migration can list them
+        Files.writeString(infoFile, mapper.writeValueAsString(member) + System.lineSeparator()
+                + mapper.writeValueAsString(member) + System.lineSeparator()
+                + mapper.writeValueAsString(group) + System.lineSeparator());
+
+        config.setInputDir(input.toFile());
+        config.setResourceInfoFile(infoFile);
+        config.setArchivalGroupRdfTypes("http://www.w3.org/ns/ldp#BasicContainer");
+
+        UpgradeManagerFactory.create(config).start();
+
+        final var sessions = UpgradeManagerFactory.createOcflObjectSessionFactory(config);
+        try (final var session = sessions.newSession(groupId)) {
+            assertTrue(session.containsResource(groupId));
+            assertTrue(session.containsResource(groupId + "/binary-child"));
+            // The group is written once: the version ocfl-java creates with the object, and one holding the group
+            assertEquals(1, session.listVersions(groupId).size());
+        }
+    }
+
+    @Test
     public void failWhenExportHasNoRepositoryRoot() throws IOException {
         config.setInputDir(tempFolder.newFolder());
 

@@ -68,16 +68,42 @@ public class UpgradeManagerFactory {
 
     private static MigrationTaskManager createF6MigrationTaskManager(final Config config,
                                                                      final ResourceInfoLogger infoLogger) {
-        final var migrator = new ResourceMigrator(config, createOcflObjectSessionFactory(config));
+        final var ocflRepo = createOcflRepo(config);
+        if (config.isRequireEmptyOutput()) {
+            try (final var objectIds = ocflRepo.listObjectIds()) {
+                final var existing = objectIds.findFirst();
+                if (existing.isPresent()) {
+                    ocflRepo.close();
+                    throw new IllegalStateException("The OCFL storage root is not empty: it holds " + existing.get()
+                            + ". Resources that are already there would be skipped, not migrated again.");
+                }
+            }
+        }
+        final var migrator = new ResourceMigrator(config, createOcflObjectSessionFactory(config, ocflRepo), ocflRepo);
         return new MigrationTaskManager(config.getThreads(), migrator, infoLogger);
     }
 
     @VisibleForTesting
     public static OcflObjectSessionFactory createOcflObjectSessionFactory(final Config config) {
+        return createOcflObjectSessionFactory(config, createOcflRepo(config));
+    }
+
+    @VisibleForTesting
+    public static MutableOcflRepository createOcflRepo(final Config config) {
         try {
             final var output = config.getOutputDir().toPath().resolve("data");
             final var ocflRoot = Files.createDirectories(output.resolve("ocfl-root"));
             final var work = Files.createDirectories(output.resolve("ocfl-temp"));
+            return createOcflRepo(config, ocflRoot, work);
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
+    private static OcflObjectSessionFactory createOcflObjectSessionFactory(final Config config,
+                                                                           final MutableOcflRepository ocflRepo) {
+        try {
+            final var output = config.getOutputDir().toPath().resolve("data");
             final var staging = Files.createDirectories(output.resolve("staging"));
 
             final var objectMapper = new ObjectMapper()
@@ -95,7 +121,7 @@ public class UpgradeManagerFactory {
                     .expireAfterAccess(Duration.ofMinutes(10))
                     .build();
 
-            return new DefaultOcflObjectSessionFactory(createOcflRepo(config, ocflRoot, work),
+            return new DefaultOcflObjectSessionFactory(ocflRepo,
                     staging,
                     objectMapper,
                     new CaffeineCache<>(headersCache),

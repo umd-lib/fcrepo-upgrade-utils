@@ -43,6 +43,7 @@ public class Config {
     private Path resourceInfoFile;
     private boolean skipAcls = false;
     private boolean linkBinaries = false;
+    private boolean requireEmptyOutput = false;
     private String archivalGroupRdfTypes;
 
     // S3 Options
@@ -289,6 +290,22 @@ public class Config {
     }
 
     /**
+     * @return true if a migration to 6+ should fail when the OCFL storage root already holds objects
+     */
+    public boolean isRequireEmptyOutput() {
+        return requireEmptyOutput;
+    }
+
+    /**
+     * @param requireEmptyOutput true if a migration to 6+ should fail, before migrating anything, when the OCFL
+     *                           storage root already holds objects. A resource that is already there is otherwise
+     *                           skipped, whatever its content.
+     */
+    public void setRequireEmptyOutput(final boolean requireEmptyOutput) {
+        this.requireEmptyOutput = requireEmptyOutput;
+    }
+
+    /**
      * @return RDF types that identify Archival Groups, comma separated
      */
     public String getArchivalGroupRdfTypes() {
@@ -444,6 +461,7 @@ public class Config {
                 ", forceWindowsMode=" + forceWindowsMode +
                 ", skipAcls=" + skipAcls +
                 ", linkBinaries=" + linkBinaries +
+                ", requireEmptyOutput=" + requireEmptyOutput +
                 ", writeToS3=" + writeToS3 +
                 ", s3Region='" + s3Region + '\'' +
                 ", s3Endpoint='" + s3Endpoint + '\'' +

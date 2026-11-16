@@ -41,6 +41,8 @@ import org.apache.jena.rdf.model.Model;
 import org.apache.jena.rdf.model.Property;
 import org.apache.jena.riot.Lang;
 import org.apache.jena.vocabulary.RDF;
+import io.ocfl.api.OcflRepository;
+import io.ocfl.api.exception.CorruptObjectException;
 import org.fcrepo.storage.ocfl.InteractionModel;
 import org.fcrepo.storage.ocfl.OcflObjectSession;
 import org.fcrepo.storage.ocfl.OcflObjectSessionFactory;
@@ -75,6 +77,7 @@ public class ResourceMigrator {
     private static final String FCR_ACL_ID = "fcr:acl";
 
     private final OcflObjectSessionFactory objectSessionFactory;
+    private final OcflRepository ocflRepo;
     private final ObjectMapper objectMapper;
     private final Lang srcRdfLang;
     private final String srcRdfExt;
@@ -96,6 +99,19 @@ public class ResourceMigrator {
      */
     public ResourceMigrator(final Config config,
                             final OcflObjectSessionFactory objectSessionFactory) {
+        this(config, objectSessionFactory, null);
+    }
+
+    /**
+     * @param config the migration configuration
+     * @param objectSessionFactory the OCFL object session factory
+     * @param ocflRepo the OCFL repository the session factory writes to, used to remove objects whose creation an
+     *                 earlier migration did not finish; may be null
+     */
+    public ResourceMigrator(final Config config,
+                            final OcflObjectSessionFactory objectSessionFactory,
+                            final OcflRepository ocflRepo) {
+        this.ocflRepo = ocflRepo;
         this.objectSessionFactory = objectSessionFactory;
         this.objectMapper = new ObjectMapper();
 
@@ -120,7 +136,7 @@ public class ResourceMigrator {
         LOGGER.debug("Resource info: {}", info);
 
         try {
-            if (!containsResource(info.getFullId())) {
+            if (!isMigrated(info)) {
                 switch (info.getType()) {
                     case BINARY:
                         migrateBinary(info);
@@ -136,6 +152,12 @@ public class ResourceMigrator {
                 }
             } else {
                 LOGGER.info("Skipping {} because it has already been migrated", info.getFullId());
+                // Its children must still be migrated as members of the group if it is an archival group, which
+                // is otherwise only found out by migrating it
+                if (info.getType() == ResourceInfo.Type.CONTAINER && info.getArchivalGroupId() == null
+                        && isStoredAsArchivalGroup(info.getFullId())) {
+                    info.setArchivalGroupId(info.getFullId());
+                }
             }
 
             if (info.getType() == ResourceInfo.Type.CONTAINER) {
@@ -426,9 +448,38 @@ public class ResourceMigrator {
         }
     }
 
-    private boolean containsResource(final String fullId) {
-        try (final var session = objectSessionFactory.newSession(fullId)) {
+    /**
+     * A migration that was killed while it was storing a new OCFL object leaves the object without its root
+     * inventory. Such an object cannot be read, added to or deleted through a session, so the resource could never
+     * be migrated. It holds nothing that was committed: remove it, so that the resource is migrated again.
+     */
+    private boolean isMigrated(final ResourceInfo info) {
+        final var fullId = info.getFullId();
+        try {
+            // A member of an archival group is stored in the group's OCFL object, not in one of its own
+            return containsResource(info.getArchivalGroupId() != null ? info.getArchivalGroupId() : fullId, fullId);
+        } catch (CorruptObjectException e) {
+            // A member of an archival group is stored in the group's object, which is the group's to remove
+            final var ownsObject = info.getArchivalGroupId() == null || info.getArchivalGroupId().equals(fullId);
+            if (ocflRepo == null || !ownsObject) {
+                throw e;
+            }
+            LOGGER.warn("Removing the OCFL object of {}, which an interrupted migration left incomplete ({}), "
+                    + "and migrating the resource again", fullId, e.getMessage());
+            ocflRepo.purgeObject(fullId);
+            return false;
+        }
+    }
+
+    private boolean containsResource(final String objectId, final String fullId) {
+        try (final var session = objectSessionFactory.newSession(objectId)) {
             return session.containsResource(fullId);
+        }
+    }
+
+    private boolean isStoredAsArchivalGroup(final String fullId) {
+        try (final var session = objectSessionFactory.newSession(fullId)) {
+            return session.readHeaders(fullId).isArchivalGroup();
         }
     }
 

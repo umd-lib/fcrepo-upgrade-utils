@@ -12,6 +12,8 @@ import org.slf4j.Logger;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.util.HashSet;
+import java.util.stream.Collectors;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
@@ -56,7 +58,19 @@ class F5ToF6UpgradeManager implements UpgradeManager {
         } else {
             LOGGER.info("Starting migration from resources file {}", config.getResourceInfoFile());
             final var infos = infoLogger.parseLog(config.getResourceInfoFile());
-            infos.forEach(migrationTaskManager::submit);
+            // Each resource once. A member of an archival group that is itself listed is left to the group, which
+            // migrates all of its members: migrated on its own as well, it would be written to the group's object
+            // by two tasks at once.
+            final var ids = infos.stream().map(ResourceInfo::getFullId).collect(Collectors.toSet());
+            final var submitted = new HashSet<String>();
+            for (final var info : infos) {
+                final var groupId = info.getArchivalGroupId();
+                if (groupId != null && !groupId.equals(info.getFullId()) && ids.contains(groupId)) {
+                    LOGGER.info("Leaving {} to its archival group {}", info.getFullId(), groupId);
+                } else if (submitted.add(info.getFullId())) {
+                    migrationTaskManager.submit(info);
+                }
+            }
         }
 
         try {
