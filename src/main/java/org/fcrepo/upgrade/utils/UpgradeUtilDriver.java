@@ -82,6 +82,23 @@ public class UpgradeUtilDriver {
         }
     }
 
+    private int positiveInt(final CommandLine cmd, final String option, final int defaultValue,
+                            final Options configOptions) {
+        if (!cmd.hasOption(option)) {
+            return defaultValue;
+        }
+        try {
+            final int value = Integer.parseInt(cmd.getOptionValue(option).trim());
+            if (value > 0) {
+                return value;
+            }
+        } catch (final NumberFormatException e) {
+            // reported below
+        }
+        throw printHelpAndExit(format("%s must be a positive whole number, not %s", option,
+                cmd.getOptionValue(option)), configOptions);
+    }
+
     Config parseOptions(final Options configOptions, final String[] args) {
         // first see if they've specified a config file
         final CommandLineParser parser = new DefaultParser();
@@ -185,6 +202,10 @@ public class UpgradeUtilDriver {
         config.setS3SecretKey(cmd.getOptionValue("s3-secret-key"));
         config.setS3Bucket(cmd.getOptionValue("s3-bucket"));
         config.setS3Prefix(cmd.getOptionValue("s3-prefix"));
+        config.setS3MaxConnections(positiveInt(cmd, "s3-max-connections", Config.DEFAULT_S3_MAX_CONNECTIONS,
+                configOptions));
+        config.setS3ConnectionAcquisitionTimeoutSeconds(positiveInt(cmd, "s3-connection-acquisition-timeout",
+                Config.DEFAULT_S3_CONNECTION_ACQUISITION_TIMEOUT_SECONDS, configOptions));
 
         if (cmd.getOptionValue('R') != null) {
             config.setResourceInfoFile(Paths.get(cmd.getOptionValue('R')));
@@ -355,6 +376,24 @@ public class UpgradeUtilDriver {
                 .longOpt("s3-endpoint")
                 .hasArg(true)
                 .desc("The AWS endpoint URL, optionally use when writing to S3")
+                .required(false)
+                .build());
+
+        configOptions.addOption(Option.builder()
+                .longOpt("s3-max-connections")
+                .hasArg(true)
+                .desc("The most connections to S3 open at once, when writing to S3. An OCFL version is uploaded "
+                        + "with all of its files at once, and a large file in parts, so a large archival group "
+                        + "needs many. Default: " + Config.DEFAULT_S3_MAX_CONNECTIONS)
+                .required(false)
+                .build());
+
+        configOptions.addOption(Option.builder()
+                .longOpt("s3-connection-acquisition-timeout")
+                .hasArg(true)
+                .desc("How long, in seconds, a request to S3 waits for a free connection before it fails, when "
+                        + "writing to S3. Requests beyond --s3-max-connections wait for one. Default: "
+                        + Config.DEFAULT_S3_CONNECTION_ACQUISITION_TIMEOUT_SECONDS)
                 .required(false)
                 .build());
 

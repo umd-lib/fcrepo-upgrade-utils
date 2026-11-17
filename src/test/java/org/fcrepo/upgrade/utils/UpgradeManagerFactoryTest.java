@@ -64,6 +64,8 @@ public class UpgradeManagerFactoryTest {
         config.setS3PathStyleAccess(true);
         config.setS3AccessKey("access");
         config.setS3SecretKey("secret");
+        config.setS3MaxConnections(10);
+        config.setS3ConnectionAcquisitionTimeoutSeconds(5);
         // Builds the S3 client from the config, then fails when initializing storage against the endpoint
         assertThrows(RuntimeException.class, () -> UpgradeManagerFactory.createOcflObjectSessionFactory(config));
     }

@@ -51,6 +51,10 @@ public class Config {
     private String s3Region;
     private String s3Endpoint;
     private boolean s3PathStyleAccess;
+    public static final int DEFAULT_S3_MAX_CONNECTIONS = 200;
+    public static final int DEFAULT_S3_CONNECTION_ACQUISITION_TIMEOUT_SECONDS = 600;
+    private int s3MaxConnections = DEFAULT_S3_MAX_CONNECTIONS;
+    private int s3ConnectionAcquisitionTimeoutSeconds = DEFAULT_S3_CONNECTION_ACQUISITION_TIMEOUT_SECONDS;
     private String s3AccessKey;
     private String s3SecretKey;
     private String s3Bucket;
@@ -376,6 +380,34 @@ public class Config {
     }
 
     /**
+     * @return the most connections to S3 open at once
+     */
+    public int getS3MaxConnections() {
+        return s3MaxConnections;
+    }
+
+    /**
+     * @param s3MaxConnections the most connections to S3 open at once
+     */
+    public void setS3MaxConnections(final int s3MaxConnections) {
+        this.s3MaxConnections = s3MaxConnections;
+    }
+
+    /**
+     * @return how long, in seconds, a request to S3 waits for a free connection before it fails
+     */
+    public int getS3ConnectionAcquisitionTimeoutSeconds() {
+        return s3ConnectionAcquisitionTimeoutSeconds;
+    }
+
+    /**
+     * @param seconds how long a request to S3 waits for a free connection before it fails
+     */
+    public void setS3ConnectionAcquisitionTimeoutSeconds(final int seconds) {
+        this.s3ConnectionAcquisitionTimeoutSeconds = seconds;
+    }
+
+    /**
      * @return aws access key
      */
     public String getS3AccessKey() {
@@ -466,6 +498,8 @@ public class Config {
                 ", s3Region='" + s3Region + '\'' +
                 ", s3Endpoint='" + s3Endpoint + '\'' +
                 ", s3PathStyleAccess=" + s3PathStyleAccess +
+                ", s3MaxConnections=" + s3MaxConnections +
+                ", s3ConnectionAcquisitionTimeoutSeconds=" + s3ConnectionAcquisitionTimeoutSeconds +
                 ", s3Bucket=" + s3Bucket +
                 ", s3Prefix=" + s3Prefix +
                 ", resourceInfoFile=" + resourceInfoFile +

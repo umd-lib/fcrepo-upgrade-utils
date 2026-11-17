@@ -107,6 +107,11 @@
       <groupId>software.amazon.awssdk</groupId>
       <artifactId>sts</artifactId>
     </dependency>
+    <!-- The S3 client's HTTP client, configured for the many connections an OCFL version's upload needs -->
+    <dependency>
+      <groupId>software.amazon.awssdk</groupId>
+      <artifactId>netty-nio-client</artifactId>
+    </dependency>
 
     <dependency>
       <groupId>org.apache.commons</groupId>

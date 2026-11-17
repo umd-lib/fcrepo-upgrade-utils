@@ -31,6 +31,7 @@ import org.fcrepo.upgrade.utils.f6.ResourceInfoLogger;
 import org.fcrepo.upgrade.utils.f6.ResourceMigrator;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
+import software.amazon.awssdk.http.nio.netty.NettyNioAsyncHttpClient;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3AsyncClient;
 import software.amazon.awssdk.transfer.s3.S3TransferManager;
@@ -174,8 +175,17 @@ public class UpgradeManagerFactory {
     }
 
     private static S3AsyncClient s3Client(final Config config) {
+        // ocfl-java uploads every file of a new OCFL version at once, and the client uploads a large file in
+        // parts, also at once: one archival group of large files can ask for far more connections than the
+        // SDK's default 50. Requests beyond the limit wait for a connection; with the SDK's default 10 second
+        // wait, they failed instead, and took the whole archival group with them.
+        final var httpClient = NettyNioAsyncHttpClient.builder()
+                .maxConcurrency(config.getS3MaxConnections())
+                .connectionAcquisitionTimeout(Duration.ofSeconds(config.getS3ConnectionAcquisitionTimeoutSeconds()))
+                .maxPendingConnectionAcquires(1_000_000);
+
         // multipartEnabled lets the client use UploadPartCopy for objects over the 5GB CopyObject limit
-        final var builder = S3AsyncClient.builder().multipartEnabled(true);
+        final var builder = S3AsyncClient.builder().multipartEnabled(true).httpClientBuilder(httpClient);
 
         if (StringUtils.isNotBlank(config.getS3Region())) {
             builder.region(Region.of(config.getS3Region()));

@@ -63,6 +63,16 @@ public class UpgradeUtilDriverTest {
     }
 
     @Test
+    public void testS3ConnectionDefaultsAndBadValues() {
+        final var config = parse(f6Args("--write-to-s3", "--s3-bucket", "bucket"));
+        assertEquals(Config.DEFAULT_S3_MAX_CONNECTIONS, config.getS3MaxConnections());
+        assertEquals(Config.DEFAULT_S3_CONNECTION_ACQUISITION_TIMEOUT_SECONDS,
+                config.getS3ConnectionAcquisitionTimeoutSeconds());
+        assertExit(f6Args("--write-to-s3", "--s3-bucket", "bucket", "--s3-max-connections", "0"));
+        assertExit(f6Args("--write-to-s3", "--s3-bucket", "bucket", "--s3-connection-acquisition-timeout", "ten"));
+    }
+
+    @Test
     public void testParseAllF6Options() {
         final var config = parse(f6Args(
                 "-r", "application/n-triples",
@@ -80,7 +90,11 @@ public class UpgradeUtilDriverTest {
                 "--s3-path-style-access",
                 "--s3-access-key", "access",
                 "--s3-secret-key", "secret",
+                "--s3-max-connections", "400",
+                "--s3-connection-acquisition-timeout", "1200",
                 "-R", "remaining.log"));
+        assertEquals(400, config.getS3MaxConnections());
+        assertEquals(1200, config.getS3ConnectionAcquisitionTimeoutSeconds());
 
         assertEquals(FedoraVersion.V_5, config.getSourceVersion());
         assertEquals(FedoraVersion.V_6, config.getTargetVersion());
